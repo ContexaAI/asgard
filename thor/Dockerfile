@@ -1,16 +1,30 @@
-FROM python:3.11-slim
+FROM python:3.11-slim as base
 
-RUN export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get upgrade -y
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY poetry.lock pyproject.toml /app/
-RUN poetry config virtualenvs.create false && poetry install --no-root
+FROM base as builder
 
-COPY . /app
-RUN poetry run pip install -e .
+ENV PIP_DEFAULT_TIMEOUT=100 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    POETRY_VERSION=2.1.3
 
-ENTRYPOINT ["thor"]
+RUN pip install "poetry==$POETRY_VERSION"
 
+COPY pyproject.toml poetry.lock README.md ./
+COPY . .
+RUN poetry config virtualenvs.in-project true && \
+    poetry install --only=main --no-root && \
+    poetry build
 
-    
+FROM base as final
+
+COPY --from=builder /app/.venv ./.venv
+COPY --from=builder /app/dist .
+
+RUN ./.venv/bin/pip install *.whl
+ENTRYPOINT ["./.venv/bin/thor"]
