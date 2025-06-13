@@ -12,6 +12,7 @@ from thor.config import settings
 from mcp.types import JSONRPCRequest, JSONRPCNotification, JSONRPCResponse, JSONRPCError
 
 import json
+import zmq
 from asgiref.sync import async_to_sync
 
 
@@ -124,8 +125,39 @@ class WorkerManager:
 
     def task_handle_initialize_request(self, request: str, channel_id: str, user_info: dict) -> None:
         # TODO: do something here
-        print("handle_initialize_request")
-        pass
+        print(f"handle_initialize_request received for channel {channel_id} with user_info: {user_info}")
+        print(f"Original request content (first 200 chars): {request[:200]}")
+
+        context = None
+        socket = None
+        try:
+            context = zmq.Context()
+            socket = context.socket(zmq.REQ)
+            # Set timeouts to prevent indefinite blocking
+            socket.setsockopt(zmq.LINGER, 0)  # Discard pending messages on close immediately
+            socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 seconds timeout for receive
+            socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 seconds timeout for send
+
+            socket.connect("tcp://localhost:5555")
+
+            print(f"Sending ZMQ request (first 200 chars): {request[:200]}...")
+            socket.send_string(request)
+
+            # Wait for the reply
+            reply_message = socket.recv_string()
+            print(f"Received ZMQ reply (first 200 chars): {reply_message[:200]}...")
+
+        except zmq.error.ZMQError as e:
+            print(f"ZMQ Error in task_handle_initialize_request: {e}")
+            # Depending on requirements, you might want to raise an exception,
+            # send an error response, or handle it in another way.
+        except Exception as e:
+            print(f"An unexpected error occurred in task_handle_initialize_request: {e}")
+        finally:
+            if socket is not None:
+                socket.close()
+            if context is not None:
+                context.term()
 
     def task_handle_mcp_notification(self, notification: str, channel_id: str, user_info: str) -> None:
         return async_to_sync(self.task_async_handle_mcp_notification)(notification, channel_id, user_info)

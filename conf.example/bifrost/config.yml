@@ -59,7 +59,7 @@ services:
   routes:
   - name: odin-v1-api
     paths:
-    - /api/v1/
+    - /v1/
     preserve_host: true
 
 # MCP expects the odin server to maintain the openid configuration.

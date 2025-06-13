@@ -14,7 +14,7 @@ Loki is the integrated MCP Inspector UI for Asgard. It lets you browse and strea
 2. Enter your HTTP Streaming URL, for example:
 
    ```
-   http://localhost:8000/api/v1/
+   http://localhost:8000/v1/
    ```
 
 3. Click **Connect**. Events will stream live as they occur in OdinMCP.

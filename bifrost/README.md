@@ -16,7 +16,7 @@ Bifrost is the API Gateway component in the Asgard distributed architecture. It 
   Configures CORS (Cross-Origin Resource Sharing) for API endpoints to support browser-based tools (including mcp-inspector) and applications.
 
 - **Transparent Routing:**  
-  Exposes logical paths for services (e.g., `/heimdall/`, `/api/v1/`) while hiding internal network details.
+  Exposes logical paths for services (e.g., `/heimdall/`, `/v1/`) while hiding internal network details.
 
 - **OpenID Configuration Redirection:**  
   Handles special OIDC discovery endpoints for compatibility with MCP and LLM clients.
@@ -37,7 +37,7 @@ Heimdall    Odin/OdinMCP   OIDC Well-Known Redirect
 ```
 
 - **Heimdall**: Authentication and organization management (`/heimdall/`)
-- **Odin/OdinMCP**: MCP endpoints and real-time event streaming (`/api/v1/`)
+- **Odin/OdinMCP**: MCP endpoints and real-time event streaming (`/v1/`)
 - **OIDC Well-Known Redirect**: Ensures MCP clients discover the correct OpenID Provider configuration at `/.well-known/oauth-authorization-server`
 
 
@@ -51,7 +51,7 @@ Heimdall    Odin/OdinMCP   OIDC Well-Known Redirect
 
 ### 2. Odin/OdinMCP Service
 
-- **Route:** `/api/v1/` → Odin service (`http://odin:80`)
+- **Route:** `/v1/` → Odin service (`http://odin:80`)
 - **OIDC Plugin:**  
   - Handles authentication using the `bifrost` client in Heimdall/Keycloak.
   - Validates tokens and ensures only authorized requests reach Odin.
@@ -87,7 +87,7 @@ services:
 ## Authentication Flow
 
 1. **Incoming Client Request:**  
-   Request arrives at Bifrost on a path such as `/api/v1/`.
+   Request arrives at Bifrost on a path such as `/v1/`.
 2. **OIDC Validation:**  
    Kong OIDC plugin checks for a valid OIDC token (issued by Heimdall/Keycloak).
 3. **Token Introspection:**  
