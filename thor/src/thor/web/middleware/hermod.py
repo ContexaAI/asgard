@@ -45,10 +45,11 @@ class HermodStreamingMiddleware:
             supports_hermod_streaming = True
             
         
-        request.supports_hermod_streaming = supports_hermod_streaming
+        request.state.supports_hermod_streaming = supports_hermod_streaming
         
         # 1. if mcp-session-id exists -> it should be valid   
         channel_id = request.headers.get(MCP_SESSION_ID_HEADER, None)
+        request.state.channel_id = channel_id
         
         if channel_id and not self.validate_hermod_streaming_token(channel_id, request):
             raise HTTPException(

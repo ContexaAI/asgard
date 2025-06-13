@@ -7,6 +7,8 @@ x-thor-common: &thor-common
     restart: always
     env_file:
       - ./.env/thor.env
+    volumes:
+    - ./thor:/app
 
 services:
 
@@ -98,7 +100,7 @@ services:
   thor-web:
     <<: *thor-common
     container_name: thor-web
-    command: ["web"]
+    command: ["web", "reload", "1", "reload_dirs", "/app"]
     network_mode: "host"
     ports:
       - 80:80

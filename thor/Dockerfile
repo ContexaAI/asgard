@@ -16,15 +16,27 @@ ENV PIP_DEFAULT_TIMEOUT=100 \
 RUN pip install "poetry==$POETRY_VERSION"
 
 COPY pyproject.toml poetry.lock README.md ./
-COPY . .
-RUN poetry config virtualenvs.in-project true && \
-    poetry install --only=main --no-root && \
-    poetry build
 
+RUN poetry config virtualenvs.create false && \
+    poetry install --only main --no-interaction --no-ansi --no-root
+
+COPY . .
+RUN poetry build --format wheel -o dist/ --no-interaction --no-ansi
+
+
+
+
+# ---- Final Stage ----
 FROM base as final
 
-COPY --from=builder /app/.venv ./.venv
-COPY --from=builder /app/dist .
+WORKDIR /app
 
-RUN ./.venv/bin/pip install *.whl
-ENTRYPOINT ["./.venv/bin/thor"]
+# Copy the built wheels from the builder stage
+COPY --from=builder /app/dist/ /tmp/dist/
+
+# Install the wheel using pip.
+# This will also install any dependencies specified in the wheel's metadata.
+RUN pip install --no-cache-dir /tmp/dist/*.whl && \
+    rm -rf /tmp/dist/
+
+ENTRYPOINT ["thor"]

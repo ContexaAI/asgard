@@ -1,6 +1,7 @@
 from datetime import datetime
 from http import HTTPStatus
 import json
+from typing import Optional
 from uuid import uuid4
 
 
@@ -32,34 +33,21 @@ from thor.worker import WorkerManager
 class OdinHttpStreamingTransport:
     def __init__(
         self,
-        request: Request,
         mcp_id: str,
+        user_info: dict,
+        organization_id: Optional[str] = None,
+        channel_id: Optional[str] = None,
+        supports_hermod_streaming: bool = False,
     ):
-        self.request = request
-        self.supports_hermod_streaming = request.state.supports_hermod_streaming
-        self.user_info = request.state.user_info
-        self.channel_id = self.request.headers.get(MCP_SESSION_ID_HEADER, None)
+        self.supports_hermod_streaming = supports_hermod_streaming
+        self.user_info = user_info
+        self.channel_id = channel_id
         self.mcp_id = mcp_id
+        self.organization_id = organization_id
         self.worker = WorkerManager(
             mcp_id=self.mcp_id,
-            organization_id=self.request.state.organization_id,
+            organization_id=organization_id,
         )
-    
-    
-        
-    async def get_response(self) -> Response:
-        
-        method = self.request.method.upper()
-        if method == "GET":
-            return await self._handle_get() # -> Needs a validated session
-        elif method == "POST":
-            return await self._handle_post() # -> Needs a validated session. Doesnt need for initialize
-        elif method == "DELETE":
-            return await self._handle_delete() # -> Needs a validated session
-        else:
-            # For Method Not Allowed, a simple HTTP response is fine,
-            # but if you want JSON-RPC, you could use _create_error_response
-            raise HTTPException(status_code=HTTPStatus.METHOD_NOT_ALLOWED, detail="Method not allowed")
     
     
     async def _handle_get(self ) -> Response:
@@ -99,13 +87,10 @@ class OdinHttpStreamingTransport:
         
         
 
-    async def _handle_post(self) -> Response:
-
+    async def _handle_post(self, body: bytes) -> Response:
         
-        
-        # 1: try to parse the request body as JSON. except and handle
+        # try to parse the request body as JSON. except and handle
         try:
-            body = await self.request.body()
             if not body:
 
                 return self._create_error_response(
@@ -277,10 +262,10 @@ class OdinHttpStreamingTransport:
     ) -> str:
         """Create a new user channel"""
         payload = {
-            "user_info": self.request.state.user_info,
+            "user_info": self.user_info,
             "client_params": initialization_params,
             "created_at": datetime.now().isoformat(),
-            "organization_id": self.request.state.organization_id,
+            "organization_id": self.organization_id,
             "mcp_id": self.mcp_id,
         }
         return jwt.encode(payload, settings.HERMOD_STREAMING_TOKEN_SECRET, algorithm="HS256")
