@@ -16,11 +16,18 @@ import jwt
 
 class HermodStreamingMiddleware:
 
-    def validate_hermod_streaming_token(self, token:str, user_info:dict) -> bool:
+    def validate_hermod_streaming_token(self, token:str, request:Request) -> bool:
         try:
             payload = jwt.decode(token, settings.HERMOD_STREAMING_TOKEN_SECRET, algorithms=["HS256"])
-            if [a for a in payload.items() if a not in user_info.items() or a[1] != user_info[a[0]]]:
+            if payload.get("organization_id") != request.state.organization_id:
                 return False
+            
+            if payload.get("user_info") != request.state.user_info:
+                return False
+            
+            if payload.get("mcp_id") != request.path_params.get("mcp_id"):
+                return False
+
             return True
         except Exception as e:
             return False
@@ -42,9 +49,8 @@ class HermodStreamingMiddleware:
         
         # 1. if mcp-session-id exists -> it should be valid   
         channel_id = request.headers.get(MCP_SESSION_ID_HEADER, None)
-        user_info = request.state.user_info
         
-        if channel_id and not self.validate_hermod_streaming_token(channel_id, user_info):
+        if channel_id and not self.validate_hermod_streaming_token(channel_id, request):
             raise HTTPException(
                 status_code=HTTPStatus.UNAUTHORIZED,
                 detail="User not found",
