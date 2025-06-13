@@ -5,7 +5,7 @@ import typer
 import asyncio
 import importlib.resources as pkg_resources
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import os
 import shutil
 
@@ -15,27 +15,66 @@ app = typer.Typer(
     help="OdinMCP CLI",
     add_completion=False,
     no_args_is_help=True,  # Show help if no args provided
-)
+)   
 
 
 @app.command(name="web")
-def web(app_path: str, params: List[str] = typer.Argument(None)):
+def web(params: List[str] = typer.Argument(None)):
     """
     Run a web app with uvicorn. 
-    app_path should be in the format 'module:attr', e.g., 'test_app.main:web'
     Any additional CLI arguments will be passed as kwargs to uvicorn.Config, e.g.:
-    odinmcp web test_app.main:web --host 0.0.0.0 --port 8080
+    odinmcp web --host 0.0.0.0 --port 8080
     """
-    print("running web")
+    import uvicorn
+    from thor.web import app    
+    
+    extra_kwargs = {}
+    if params:
+        if len(params) % 2 != 0:
+            raise typer.BadParameter("Additional arguments must be key value pairs, e.g., --host 0.0.0.0 --port 8080")
+        for i in range(0, len(params), 2):
+            key = params[i].lstrip('-')
+            value = params[i + 1]
+            # Try to convert value to int or float if possible
+            if value.isdigit():
+                value = int(value)
+            else:
+                try:
+                    value = float(value)
+                except ValueError:
+                    pass
+            extra_kwargs[key] = value
+
+    # Default port to 80 if not provided
+    if "port" not in extra_kwargs:
+        extra_kwargs["port"] = 80
+
+
+    config = uvicorn.Config(
+        app,
+        **extra_kwargs
+    )
+    server = uvicorn.Server(config)
+    asyncio.run(server.serve())
+
 
 
 @app.command(name="worker")
-def worker(app_path: str, params: List[str] = typer.Argument(None)):
-    print("running worker")
+def worker(mcp_id: Optional[str] = typer.Argument("mcp", help="The MCP ID for this worker instance. Defaults to 'mcp'."), params: List[str] = typer.Argument(None)):
+    from thor.worker import WorkerManager
+
+    worker_manager = WorkerManager(mcp_id=mcp_id)
+    celery_app = worker_manager.get_worker()
+
+    # Start the Celery worker, directing it to consume from the queue named after mcp_id.
+    # The -Q option specifies the queue.
+    base_argv = ["worker", "-Q", mcp_id]
+    argv = base_argv + (params or [])
+    celery_app.worker_main(argv=argv)
 
 
 
 @app.command(name="sidecar")
-def sidecar(app_path: str, params: List[str] = typer.Argument(None)):
+def sidecar(params: List[str] = typer.Argument(None)):
     print("running sidecar")
 
