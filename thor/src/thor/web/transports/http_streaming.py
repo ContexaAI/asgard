@@ -42,6 +42,7 @@ class OdinHttpStreamingTransport:
         self.mcp_id = mcp_id
         self.worker = WorkerManager(
             mcp_id=self.mcp_id,
+            organization_id=self.request.state.organization_id,
         )
     
     

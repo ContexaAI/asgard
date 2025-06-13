@@ -22,23 +22,30 @@ class WorkerManager:
     def __init__(
         self, 
         mcp_id: str,
+        organization_id: Optional[str] = None,
     ):
         self.worker = self._build_worker()
         self.mcp_id = mcp_id
+        self.organization_id = organization_id
 
     def get_worker(self):
         return self.worker
+
+    def get_queue_name(self):
+        if self.organization_id:
+            return f"{self.organization_id}_{self.mcp_id}"
+        return self.mcp_id
 
 
     def send_task(self, 
         task_name: str, 
         args: tuple, 
     ):
-        
+        queue = self.get_queue_name()
         self.worker.send_task(
             task_name, 
             args=args,
-            queue=self.mcp_id
+            queue=queue
         )
 
     def  handle_initialize_request(self, 

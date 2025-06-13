@@ -60,15 +60,22 @@ def web(params: List[str] = typer.Argument(None)):
 
 
 @app.command(name="worker")
-def worker(mcp_id: Optional[str] = typer.Argument("mcp", help="The MCP ID for this worker instance. Defaults to 'mcp'."), params: List[str] = typer.Argument(None)):
+def worker(
+    mcp_id: Optional[str] = typer.Argument("mcp", help="The MCP ID for this worker instance. Defaults to 'mcp'."), 
+    organization_id: Optional[str] = typer.Argument(None, help="The organization ID for this worker instance. Defaults to None."),
+    params: List[str] = typer.Argument(None)
+):
     from thor.worker import WorkerManager
 
-    worker_manager = WorkerManager(mcp_id=mcp_id)
+    worker_manager = WorkerManager(
+        mcp_id=mcp_id,
+        organization_id=organization_id,
+    )
     celery_app = worker_manager.get_worker()
 
     # Start the Celery worker, directing it to consume from the queue named after mcp_id.
     # The -Q option specifies the queue.
-    base_argv = ["worker", "-Q", mcp_id]
+    base_argv = ["worker", "-Q", worker_manager.get_queue_name()]
     argv = base_argv + (params or [])
     celery_app.worker_main(argv=argv)
 
