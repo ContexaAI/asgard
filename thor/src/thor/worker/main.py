@@ -9,10 +9,14 @@ from celery import Celery, states
 from starlette.exceptions import HTTPException
 from thor.constants import MCP_CELERY_PROGRESS_STATE
 from thor.config import settings
-from mcp.types import JSONRPCRequest, JSONRPCNotification, JSONRPCResponse, JSONRPCError
-
+from mcp.types import JSONRPCRequest, JSONRPCNotification, JSONRPCResponse, JSONRPCError, ErrorData, JSONRPCMessage, ServerResult
+from mcp.shared.session import (
+    SendRequestT, SendResultT, SendNotificationT, ReceiveResultT, ProgressFnT, RequestId
+)
+from mcp.shared.session import SessionMessage
 import json
 import zmq
+import time
 from asgiref.sync import async_to_sync
 
 
@@ -43,21 +47,24 @@ class WorkerManager:
         args: tuple, 
     ):
         queue = self.get_queue_name()
-        self.worker.send_task(
+        return self.worker.send_task(
             task_name, 
             args=args,
             queue=queue
         )
 
-    def  handle_initialize_request(self, 
+    def handle_initialize_request(self, 
         request: JSONRPCRequest, 
         channel_id: str, 
         user_info: dict, 
     ):
-        self.send_task(
-            "handle_initialize_request", 
+        task = self.send_task(
+            "handle_mcp_request", 
             args=(request.model_dump_json(by_alias=True, exclude_none=True), channel_id, user_info),
         )
+        task = AsyncResult(str(task))
+        res = task.get()
+        return JSONRPCResponse.model_validate_json(res)
     
     def handle_mcp_request(
         self, 
@@ -105,7 +112,6 @@ class WorkerManager:
             broker=settings.CELERY_BROKER,
             backend=settings.CELERY_BACKEND
         )
-        worker.task(self.task_handle_initialize_request, name="handle_initialize_request")
         worker.task(self.task_handle_mcp_request, name="handle_mcp_request")
         worker.task(self.task_handle_mcp_notification, name="handle_mcp_notification")
         worker.task(self.task_handle_mcp_response, name="handle_mcp_response")
@@ -115,54 +121,145 @@ class WorkerManager:
     def _generate_response_task_id(self, request_id: str, channel_id: str) -> str:
         return f"response_{channel_id}_{request_id}"
 
-    def task_handle_mcp_request(self, request: str, channel_id: str, user_info: dict) -> None:
-        return async_to_sync(self.task_async_handle_mcp_request)(request, channel_id, user_info)
+    def _get_hermod_socket(self) -> zmq.Socket:
+        zmq_context = zmq.Context()
+        hermod_socket = zmq_context.socket(zmq.PUB)
+        for url in settings.HERMOD_STREAMING_ZERO_MQ_URLS:
+            hermod_socket.connect(url)
+        # TODO: wait till socket is ready instead of time.sleep
+        time.sleep(0.1)
+        return hermod_socket
 
-    async def task_async_handle_mcp_request(self, request: str, channel_id: str, user_info: dict) -> None:
-        # TODO: do something here
-        print("handle_mcp_request")
-        pass
+    def _send_sse_message(
+        self, 
+        message: SessionMessage,
+        channel_id: str,
+    ) -> None:
+        hermod_socket = self._get_hermod_socket()
+        content = "event: message\ndata: " + message.message.model_dump_json(by_alias=True, exclude_none=True)
+        item = {
+            "channel": channel_id,
+            "formats":{
+                "http-stream": {
+                    "content": content +"\n\n"
+                }
+            }
+        }
+        hermod_socket.send_multipart(
+            [
+                channel_id.encode(),
+                ("J" + json.dumps(item)).encode(),
+            ]
+        )
 
-    def task_handle_initialize_request(self, request: str, channel_id: str, user_info: dict) -> None:
-        # TODO: do something here
-        print(f"handle_initialize_request received for channel {channel_id} with user_info: {user_info}")
-        print(f"Original request content (first 200 chars): {request[:200]}")
+    async def _send_response(
+        self,
+        response: SendResultT | ErrorData,
+        request_id: RequestId,
+        channel_id: str,
+    ) -> None:
+        if isinstance(response, ErrorData):
+            jsonrpc_error = JSONRPCError(jsonrpc="2.0", id=request_id, error=response)
+            message = JSONRPCMessage(jsonrpc_error)
+        else:
+            jsonrpc_response = JSONRPCResponse(
+                jsonrpc="2.0",
+                id=request_id,
+                result=response.model_dump(
+                    by_alias=True, mode="json", exclude_none=True
+                ),
+            )
+            message = JSONRPCMessage(jsonrpc_response)
+        session_message = SessionMessage(message=message)
+        self._send_sse_message(session_message, channel_id)
 
+    def _send_zmq_message(self, message: str):
+        """Helper method to send a message over ZMQ with optional response handling.
+        
+        Args:
+            message: The message to send
+            
+        Returns:
+            Response from ZMQ server if expect_response is True, or ErrorData on error, or None if no response expected
+        """
+        zmq_url = settings.ODINMCP_ZMQ_URL
+        
+        # Initialize variables
         context = None
         socket = None
+        reply_message = None
+        
         try:
             context = zmq.Context()
             socket = context.socket(zmq.REQ)
+            
             # Set timeouts to prevent indefinite blocking
             socket.setsockopt(zmq.LINGER, 0)  # Discard pending messages on close immediately
             socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 seconds timeout for receive
             socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 seconds timeout for send
-
-            socket.connect("tcp://localhost:5555")
-
-            print(f"Sending ZMQ request (first 200 chars): {request[:200]}...")
-            socket.send_string(request)
-
-            # Wait for the reply
+            
+            socket.connect(zmq_url)
+            socket.send_string(message)
+            
+            # Only wait for reply if expected
+            
             reply_message = socket.recv_string()
-            print(f"Received ZMQ reply (first 200 chars): {reply_message[:200]}...")
-
+            return reply_message
+                
         except zmq.error.ZMQError as e:
-            print(f"ZMQ Error in task_handle_initialize_request: {e}")
-            # Depending on requirements, you might want to raise an exception,
-            # send an error response, or handle it in another way.
+            return ErrorData(code=0, message=str(e), data=None)
+            
         except Exception as e:
-            print(f"An unexpected error occurred in task_handle_initialize_request: {e}")
+            return ErrorData(code=0, message=str(e), data=None)
+            
         finally:
             if socket is not None:
                 socket.close()
             if context is not None:
                 context.term()
+    
+    def task_handle_mcp_request(self, request: str, channel_id: str, user_info: dict) -> None:
+        
+        rpc_request = JSONRPCRequest.model_validate_json(request)
+
+        reply = self._send_zmq_message(request)
+
+
+        if not reply:
+            return ErrorData(code=0, message="No reply received", data=None)
+
+        if not isinstance(reply, ErrorData):
+            found_model = False
+            # Use a more efficient approach with a single try block
+            for model_class in [ServerResult, ErrorData]:
+                try:
+                    reply = model_class.model_validate_json(reply)
+                    found_model = True
+                    break  # Stop if validation succeeds
+                except Exception:
+                    continue  # Try next model class
+            
+            if not found_model:
+                reply = ErrorData(code=0, message=f"Failed to parse response as valid model", data=None)
+
+        response = JSONRPCResponse(
+            jsonrpc="2.0",
+            id=rpc_request.id,
+            result=reply.model_dump(
+                by_alias=True, mode="json", exclude_none=True
+            ),
+        )
+
+        if rpc_request.method != "initialize":
+            self._send_response(
+                response=response,
+                request_id=rpc_request.id,
+                channel_id=channel_id,
+            )
+        return response.model_dump_json(by_alias=True, exclude_none=True)
+        
 
     def task_handle_mcp_notification(self, notification: str, channel_id: str, user_info: str) -> None:
-        return async_to_sync(self.task_async_handle_mcp_notification)(notification, channel_id, user_info)
-    
-    async def task_async_handle_mcp_notification(self, notification: str, channel_id: str, user_info: str) -> None:
         cli_notif = ClientNotification(json.loads(notification))
         
         user_info = json.loads(user_info)
@@ -176,7 +273,7 @@ class WorkerManager:
                 self.worker.control.revoke(task_id)
             
 
-        if isinstance(cli_notif.root, ProgressNotification):
+        elif isinstance(cli_notif.root, ProgressNotification):
             progress_id = cli_notif.root.params.progressToken
             task_id = self._generate_response_task_id(progress_id, channel_id)
             task = AsyncResult(task_id)
@@ -187,19 +284,26 @@ class WorkerManager:
                     state=MCP_CELERY_PROGRESS_STATE,
                 )
 
-        # TODO: do something here
-        print("handle_mcp_notification")
+        # Send notification over ZMQ, ignoring response
+        return self._send_zmq_message(notification)
         
     def task_handle_mcp_response(self, response: str, channel_id: str, user_info: str) -> None:
-        return async_to_sync(self.task_async_handle_mcp_response)(response, channel_id, user_info)
-    
-    async def task_async_handle_mcp_response(self, response: str, channel_id: str, user_info: str) -> str:
         return response
     
     def task_terminate_session(self, channel_id: str, user_info: str) -> None:
-        user_info = json.loads(user_info)
-        # TODO: do something here
-        print("handle_terminate_session")
         
-        
-        
+        hermod_socket = self._get_hermod_socket()
+        item = {
+            "channel": channel_id,
+            "formats":{
+                "http-stream": {
+                    "action":"close",
+                }
+            }
+        }
+        hermod_socket.send_multipart(
+            [
+                channel_id.encode(),
+                ("J" + json.dumps(item)).encode(),
+            ]
+        )

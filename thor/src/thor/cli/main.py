@@ -1,4 +1,3 @@
-
 import importlib
 from starlette.applications import Starlette
 import typer
@@ -38,6 +37,9 @@ def web(params: List[str] = typer.Argument(None)):
             # Try to convert value to int or float if possible
             if value.isdigit():
                 value = int(value)
+                # Convert numeric strings 1/0 to boolean for flags like "reload"
+                if key == "reload":
+                    value = bool(value)
             else:
                 try:
                     value = float(value)
@@ -48,10 +50,19 @@ def web(params: List[str] = typer.Argument(None)):
     # Default port to 80 if not provided
     if "port" not in extra_kwargs:
         extra_kwargs["port"] = 80
+    # Default host to 0.0.0.0 if not provided
+    if "host" not in extra_kwargs:
+        extra_kwargs["host"] = "0.0.0.0"
 
+    # If reload_dir is provided as a single string, convert it to a list as expected by uvicorn.Config
+    if isinstance(extra_kwargs.get("reload_dirs"), str):
+        extra_kwargs["reload_dirs"] = [extra_kwargs["reload_dirs"]]
+
+    # If reload is requested, uvicorn requires the app to be provided as an import string
+    target_app = "thor.web:app" if extra_kwargs.get("reload") else app
 
     config = uvicorn.Config(
-        app,
+        target_app,
         **extra_kwargs
     )
     server = uvicorn.Server(config)
@@ -84,4 +95,3 @@ def worker(
 @app.command(name="sidecar")
 def sidecar(params: List[str] = typer.Argument(None)):
     print("running sidecar")
-

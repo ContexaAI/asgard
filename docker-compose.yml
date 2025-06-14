@@ -4,6 +4,7 @@ x-thor-common: &thor-common
     image: thor
     build:
       context: ./thor
+      dockerfile: Dockerfile.dev
     restart: always
     env_file:
       - ./.env/thor.env
@@ -111,10 +112,10 @@ services:
     command: ["worker"]
     network_mode: "host"
 
-  thor-sidecar:
-    <<: *thor-common
-    container_name: thor-sidecar
-    command: ["sidecar"]
+  # thor-sidecar:
+  #   <<: *thor-common
+  #   container_name: thor-sidecar
+  #   command: ["sidecar"]
     network_mode: "host"
 
 volumes:

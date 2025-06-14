@@ -4,4 +4,4 @@ FROM node:20-slim
 # Set the working directory
 WORKDIR /app
 
-CMD ["npx", "@modelcontextprotocol/inspector"]
+CMD ["npx", "@modelcontextprotocol/inspector@0.14.0"]
